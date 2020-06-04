@@ -45,7 +45,7 @@ class exporter(object):
         # hand it won't break things either.
         #
         # Which data elements belong to each mode can vary between implementations.
-        self.mode = mode
+        self.mode = 1
 
         # Initialize an environment
         self.env = req.env
