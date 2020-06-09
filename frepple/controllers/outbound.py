@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 #
-# Copyright (C) 2014 by frePPLe bvba
+# Copyright (C) 2014 by frePPLe bv
 #
 # This library is free software; you can redistribute it and/or modify it
 # under the terms of the GNU Affero General Public License as published
@@ -142,7 +142,6 @@ class exporter(object):
     def load_uom(self):
         """
         Loading units of measures into a dictinary for fast lookups.
-
         All quantities are sent to frePPLe as numbers, expressed in the default
         unit of measure of the uom dimension.
         """
@@ -193,28 +192,22 @@ class exporter(object):
     def export_calendar(self):
         """
         Build a calendar with a) holidays and b) working hours.
-
         The holidays are obtained from the hr.holidays.public.line model.
         If the hr module isn't installed, no public holidays will be defined.
-
         The working hours are extracted from a resource.calendar model.
         The calendar to use is configured with the company parameter "calendar".
         If left unspecified we assume 24*7 working hours.
-
         The odoo model is not ideal and nice for frePPLe, and the current mapping
         is an as-good-as-it-gets workaround.
-
         Mapping:
         res.company.calendar  -> calendar.name
         (if no working hours are defined then 1 else 0) -> calendar.default_value
-
         resource.calendar.attendance.date_from -> calendar_bucket.start
         '1' -> calendar_bucket.value
         resource.calendar.attendance.dayofweek -> calendar_bucket.days
         resource.calendar.attendance.hour_from -> calendar_bucket.startime
         resource.calendar.attendance.hour_to -> calendar_bucket.endtime
         computed -> calendar_bucket.priority
-
         hr.holidays.public.line.start -> calendar_bucket.start
         hr.holidays.public.line.start + 1 day -> calendar_bucket.end
         '0' -> calendar_bucket.value
@@ -283,17 +276,13 @@ class exporter(object):
         """
         Generate a list of warehouse locations to frePPLe, based on the
         stock.warehouse model.
-
         We assume the location name to be unique. This is NOT guarantueed by Odoo.
-
         The field subategory is used to store the id of the warehouse. This makes
         it easier for frePPLe to send back planning results directly with an
         odoo location identifier.
-
         FrePPLe is not interested in the locations odoo defines with a warehouse.
         This methods also populates a map dictionary between these locations and
         warehouse they belong to.
-
         Mapping:
         stock.warehouse.name -> location.name
         stock.warehouse.id -> location.subcategory
@@ -327,6 +316,7 @@ class exporter(object):
                 childlocs[i["view_location_id"][0]] = i["name"]
                 self.warehouses.add(i["name"])
             yield "</locations>\n"
+
             # Populate a mapping location-to-warehouse name for later lookups
             parent_loc = {}
             m = self.env["stock.location"]
@@ -334,8 +324,8 @@ class exporter(object):
             for i in recs.read(["location_id"]):
                 if i["location_id"]:
                     parent_loc[i["id"]] = i["location_id"][0]
-            marked = {}
 
+            marked = {}
             def fnd_parent(loc_id): # go up the parent chain to find the warehouse
                 if not marked.get(loc_id):  # ensures O(N) iterations instead of O(N^2)
                     if childlocs.get(loc_id):
@@ -347,23 +337,23 @@ class exporter(object):
                 marked[loc_id] = True
                 return -1
 
-
+ 
             for loc_id in recs:
                 parent = fnd_parent(loc_id.id)
                 if parent != -1:
                     self.map_locations[loc_id.id] = parent
 
+
     def export_customers(self):
         """
         Generate a list of customers to frePPLe, based on the res.partner model.
         We filter on res.partner where customer = True.
-
         Mapping:
         res.partner.id res.partner.name -> customer.name
         """
         self.map_customers = {}
         m = self.env["res.partner"]
-        recs = m.search([("customer", "=", True)])
+        recs = m.search([("is_company", "=", True), ("customer_rank", ">", 0)])
         if recs:
             yield "<!-- customers -->\n"
             yield "<customers>\n"
@@ -378,12 +368,11 @@ class exporter(object):
         """
         Generate a list of suppliers for frePPLe, based on the res.partner model.
         We filter on res.supplier where supplier = True.
-
         Mapping:
         res.partner.id res.partner.name -> supplier.name
         """
         m = self.env["res.partner"]
-        recs = m.search([("supplier", "=", True)])
+        recs = m.search([("is_company", "=", True), ("supplier_rank", ">", 0)])
         if recs:
             yield "<!-- suppliers -->\n"
             yield "<suppliers>\n"
@@ -397,9 +386,7 @@ class exporter(object):
     def export_workcenters(self):
         """
         Send the workcenter list to frePPLe, based one the mrp.workcenter model.
-
         We assume the workcenter name is unique. Odoo does NOT guarantuee that.
-
         Mapping:
         mrp.workcenter.name -> resource.name
         mrp.workcenter.costs_hour -> resource.cost
@@ -427,12 +414,10 @@ class exporter(object):
         """
         Send the list of products to frePPLe, based on the product.product model.
         For purchased items we also create a procurement buffer in each warehouse.
-
         Mapping:
         [product.product.code] product.product.name -> item.name
         product.product.product_tmpl_id.list_price -> item.cost
         product.product.id , product.product.product_tmpl_id.uom_id -> item.subcategory
-
         If product.product.product_tmpl_id.purchase_ok
         and product.product.product_tmpl_id.routes contains the buy route
         we collect the suppliers as product.product.product_tmpl_id.seller_ids
@@ -451,13 +436,13 @@ class exporter(object):
         m = self.env["product.template"]
         fields = [
             "purchase_ok",
-            "route_ids",
-            "bom_ids",
+            # "route_ids", #does not exist anymore in odoo 12
+            # "bom_ids",  #does not exist anymore in odoo 12
             "produce_delay",
             "list_price",
             "uom_id",
-            "seller_ids",
-            "standard_price",
+            # "seller_ids",  #does not exist anymore in odoo 12
+            # "standard_price",  #does not exist anymore in odoo 12
         ]
         recs = m.search([])
         self.product_templates = {}
@@ -465,119 +450,80 @@ class exporter(object):
             self.product_templates[i["id"]] = i
 
         # Read the stock location routes
-        rts = self.env["stock.location.route"]
-        fields = ["name"]
-        recs = rts.search([])
-        stock_location_routes = {}
-        buy_route = None
-        mfg_route = None
+        # rts = self.env["stock.location.route"]
+        # fields = ["name"]
+        # recs = rts.search([])
+
+        # Read the suppliers
+        m = self.env["res.partner"]
+        recs = m.search(
+            [
+                ("is_company", "=", True),
+                ("supplier_rank", ">", 0),
+                ("active", "=", True),
+            ]
+        )
+        supplier_id = {}
+        fields = ["id", "name"]
         for i in recs.read(fields):
-            stock_location_routes[i["id"]] = i
-            if i["name"] and i["name"].lower().startswith("buy"):
-                # Recognize items that can be purchased
-                buy_route = i["id"]
-            if i["name"] and i["name"].lower().startswith("manufacture"):
-                mfg_route = i["id"]
+            supplier_id[i["id"]] = i["name"]
 
         # Read the products
         m = self.env["product.product"]
         recs = m.search([])
         s = self.env["product.supplierinfo"]
-        s_fields = [
-            "product_tmpl_id",
-            "name",
-            "delay",
-            "min_qty",
-            "date_end",
-            "date_start",
-            "price",
-        ]
-        s_recs = s.search([])
-        self.product_supplier = {}
-        for s in s_recs.read(s_fields):
-            if s["product_tmpl_id"][0] in self.product_supplier:
-                self.product_supplier[s["product_tmpl_id"][0]].append(
-                    (
-                        s["name"],
-                        s["delay"],
-                        s["min_qty"],
-                        s["date_end"],
-                        s["date_start"],
-                        s["price"],
-                    )
-                )
-            else:
-                self.product_supplier[s["product_tmpl_id"][0]] = [
-                    (
-                        s["name"],
-                        s["delay"],
-                        s["min_qty"],
-                        s["date_end"],
-                        s["date_start"],
-                        s["price"],
-                    )
-                ]
-        supplier = {}
+        s_fields = ["name", "delay", "min_qty", "date_end", "date_start", "price"]
         if recs:
             yield "<!-- products -->\n"
             yield "<items>\n"
-            fields = ["id", "name", "code", "product_tmpl_id", "seller_ids"]
+            fields = ["id", "name", "code", "product_tmpl_id"]  # , "seller_ids"]
             for i in recs.read(fields):
-                yielded_header = False
-                try:
-                    tmpl = self.product_templates[i["product_tmpl_id"][0]]
-                    if i["code"]:
-                        name = u"[%s] %s" % (i["code"], i["name"])
-                    else:
-                        name = i["name"]
-                    prod_obj = {"name": name, "template": i["product_tmpl_id"][0]}
-                    self.product_product[i["id"]] = prod_obj
-                    self.product_template_product[i["product_tmpl_id"][0]] = prod_obj
-                    yield '<item name=%s cost="%f" subcategory="%s,%s">\n' % (
-                        quoteattr(name),
-                        (tmpl["list_price"] or 0)
-                        / self.convert_qty_uom(1.0, tmpl["uom_id"][0], i["id"]),
-                        self.uom_categories[self.uom[tmpl["uom_id"][0]]["category"]],
-                        i["id"],
-                    )
-                    yielded_header = True
-                    # Export suppliers for the item, if the item is allowed to be purchased
-                    if (
-                        tmpl["purchase_ok"]
-                        and i["product_tmpl_id"][0] in self.product_supplier
+                tmpl = self.product_templates[i["product_tmpl_id"][0]]
+                if i["code"]:
+                    name = u"[%s] %s" % (i["code"], i["name"])
+                else:
+                    name = i["name"]
+                prod_obj = {"name": name, "template": i["product_tmpl_id"][0]}
+                self.product_product[i["id"]] = prod_obj
+                self.product_template_product[i["product_tmpl_id"][0]] = prod_obj
+                yield '<item name=%s cost="%f" subcategory="%s,%s">\n' % (
+                    quoteattr(name),
+                    (tmpl["list_price"] or 0)
+                    / self.convert_qty_uom(1.0, tmpl["uom_id"][0], i["id"]),
+                    self.uom_categories[self.uom[tmpl["uom_id"][0]]["category"]],
+                    i["id"],
+                )
+                # Export suppliers for the item, if the item is allowed to be purchased
+                if (
+                    tmpl["purchase_ok"]
+                    # and buy_route in tmpl["route_ids"]
+                    # and tmpl["seller_ids"] seller_ids doesn't exist anymore in odoo 12
+                ):
+                    yield "<itemsuppliers>\n"
+                    for sup in s.search([("product_tmpl_id", "=", tmpl["id"])]).read(
+                        s_fields
                     ):
-                        yield "<itemsuppliers>\n"
-                        for sup in self.product_supplier[i["product_tmpl_id"][0]]:
-                            try:
-                                name = "%d %s" % (sup[0][0], sup[0][1])
-                                yield '<itemsupplier leadtime="P%dD" priority="1" size_minimum="%f" cost="%f"%s%s><supplier name=%s/></itemsupplier>\n' % (
-                                    sup[1],
-                                    sup[2],
-                                    sup[5],
-                                    ' effective_end="%s"' % sup[3] if sup[3] else "",
-                                    ' effective_start="%s"' % sup[4] if sup[4] else "",
-                                    quoteattr(name),
-                                )
-                            except Exception as e:
-                                logger.error(
-                                    "Error exporting suppliers for product %s: %s"
-                                    % (i.get("id", None), e)
-                                )
-                        yield "</itemsuppliers>\n"
-                    yield "</item>\n"
-                except Exception as e:
-                    logger.error(
-                        "Error exporting product %s: %s" % (i.get("id", None), e)
-                    )
-                    if yielded_header:
-                        yield "</item>\n"
+                        name = "%d %s" % (sup["name"][0], sup["name"][1])
+                        yield '<itemsupplier leadtime="P%dD" priority="1" size_minimum="%f" cost="%f"%s%s><supplier name=%s/></itemsupplier>\n' % (
+                            sup["delay"],
+                            sup["min_qty"],
+                            sup["price"],
+                            ' effective_end="%s"' % sup["date_end"]
+                            if sup["date_end"]
+                            else "",
+                            ' effective_start="%s"' % sup["date_start"]
+                            if sup["date_start"]
+                            else "",
+                            quoteattr(name),
+                        )
+                    yield "</itemsuppliers>\n"
+                yield "</item>\n"
             yield "</items>\n"
 
     def export_boms(self):
         """
         Exports mrp.routings, mrp.routing.workcenter and mrp.bom records into
         frePPLe operations, flows and loads.
-
         Not supported yet: a) parent boms, b) phantom boms.
         """
         yield "<!-- bills of material -->\n"
@@ -585,12 +531,12 @@ class exporter(object):
         self.operations = set()
 
         # Read all active manufacturing routings
-        m = self.env["mrp.routing"]
-        recs = m.search([])
-        fields = ["location_id"]
         mrp_routings = {}
-        for i in recs.read(fields):
-            mrp_routings[i["id"]] = i["location_id"]
+        # m = self.env["mrp.routing"]
+        # recs = m.search([])
+        # fields = ["location_id"]
+        # for i in recs.read(fields):
+        #    mrp_routings[i["id"]] = i["location_id"]
 
         # Read all workcenters of all routings
         mrp_routing_workcenters = {}
@@ -645,7 +591,6 @@ class exporter(object):
             "routing_id",
             "type",
             "bom_line_ids",
-            "sub_products",
         ]
         for i in bom_recs.read(bom_fields):
             # Determine the location
@@ -793,27 +738,6 @@ class exporter(object):
                             * uom_factor,
                             quoteattr(product_buf["name"]),
                         )
-                        # Add byproduct flows
-                        if i.get("sub_products", None):
-                            for j in subproduct_model.browse(i["sub_products"]).read(
-                                subproduct_fields
-                            ):
-                                product = self.product_product.get(
-                                    j["product_id"][0], None
-                                )
-                                if not product:
-                                    continue
-                                yield '<flow xsi:type="%s" quantity="%f"><item name=%s/></flow>\n' % (
-                                    "flow_fixed_end"
-                                    if j["subproduct_type"] == "fixed"
-                                    else "flow_end",
-                                    self.convert_qty_uom(
-                                        j["product_qty"],
-                                        j["product_uom"][0],
-                                        j["product_id"][0],
-                                    ),
-                                    quoteattr(product["name"]),
-                                )
                         yield "</flows>\n"
                     if step[2] == steplist[0][2]:
                         # All consuming flows on the first routing step.
@@ -856,19 +780,15 @@ class exporter(object):
         """
         Send confirmed sales order lines as demand to frePPLe, using the
         sale.order and sale.order.line models.
-
         Each order is linked to a warehouse, which is used as the location in
         frePPLe.
-
         Only orders in the status 'draft' and 'sale' are extracted.
-
         The picking policy 'complete' is supported at the sales order line
         level only in frePPLe. FrePPLe doesn't allow yet to coordinate the
         delivery of multiple lines in a sales order (except with hacky
         modeling construct).
         The field requested_date is only available when sale_order_dates is
         installed.
-
         Mapping:
         sale.order.name ' ' sale.order.line.id -> demand.name
         sales.order.requested_date -> demand.due
@@ -898,11 +818,10 @@ class exporter(object):
         fields = [
             "state",
             "partner_id",
-            "requested_date",
+            "commitment_date",
             "date_order",
             "picking_policy",
             "warehouse_id",
-            "picking_ids",
         ]
         so = {}
         for i in m.browse(ids).read(fields):
@@ -1009,10 +928,8 @@ class exporter(object):
         """
         Send all open purchase orders to frePPLe, using the purchase.order and
         purchase.order.line models.
-
         Only purchase order lines in state 'confirmed' are extracted. The state of the
         purchase order header must be "approved".
-
         Mapping:
         purchase.order.line.product_id -> operationplan.item
         purchase.order.company.mfg_location -> operationplan.location
@@ -1083,10 +1000,8 @@ class exporter(object):
     def export_manufacturingorders(self):
         """
         Extracting work in progress to frePPLe, using the mrp.production model.
-
         We extract workorders in the states 'in_production' and 'confirmed', and
         which have a bom specified.
-
         Mapping:
         mrp.production.bom_id mrp.production.bom_id.name @ mrp.production.location_dest_id -> operationplan.operation
         convert mrp.production.product_qty and mrp.production.product_uom -> operationplan.quantity
@@ -1094,11 +1009,10 @@ class exporter(object):
         mrp.production.date_planned -> operationplan.start
         '1' -> operationplan.locked
         """
-
         yield "<!-- manufacturing orders in progress -->\n"
         yield "<operationplans>\n"
         m = self.env["mrp.production"]
-        recs = m.search([("state", "in", ["progress", "confirmed", "planned"])])
+        recs = m.search([("state", "in", ["in_production", "ready", "confirmed"])])
         fields = [
             "bom_id",
             "date_start",
@@ -1111,7 +1025,7 @@ class exporter(object):
             "product_id",
         ]
         for i in recs.read(fields):
-            if i["bom_id"]:
+            if i["state"] in ("in_production", "confirmed", "ready") and i["bom_id"]:
                 # Open orders
                 location = self.map_locations.get(i["location_dest_id"][0], None)
                 operation = u"%d %s @ %s" % (i["bom_id"][0], i["bom_id"][1], location)
@@ -1123,14 +1037,11 @@ class exporter(object):
                 qty = self.convert_qty_uom(
                     i["product_qty"], i["product_uom_id"][0], i["product_id"][0]
                 )
-                yield '<operationplan reference=%s start="%s" end="%s" quantity="%s" status="%s"><operation name=%s/></operationplan>\n' % (
+                yield '<operationplan reference=%s start="%s" end="%s" quantity="%s" locked="true"><operation name=%s/></operationplan>\n' % (
                     quoteattr(i["name"]),
-                    startdate.strftime("%Y-%m-%dT%H:%M:%S"),
-                    startdate.strftime("%Y-%m-%dT%H:%M:%S"),
+                    startdate,
+                    startdate,
                     qty,
-                    "confirmed"
-                    if i["state"] in ("progress", "planned")
-                    else "approved",
                     quoteattr(operation),
                 )
         yield "</operationplans>\n"
@@ -1139,7 +1050,6 @@ class exporter(object):
         """
         Defining order points for frePPLe, based on the stock.warehouse.orderpoint
         model.
-
         Mapping:
         stock.warehouse.orderpoint.product.name ' @ ' stock.warehouse.orderpoint.location_id.name -> buffer.name
         stock.warehouse.orderpoint.location_id.name -> buffer.location
@@ -1193,9 +1103,7 @@ class exporter(object):
     def export_onhand(self):
         """
         Extracting all on hand inventories to frePPLe.
-
         We're bypassing the ORM for performance reasons.
-
         Mapping:
         stock.report.prodlots.product_id.name @ stock.report.prodlots.location_id.name -> buffer.name
         stock.report.prodlots.product_id.name -> buffer.item
@@ -1228,4 +1136,3 @@ class exporter(object):
                 quoteattr(key[1]),
             )
         yield "</buffers>\n"
-
