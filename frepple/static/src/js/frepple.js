@@ -21,9 +21,6 @@ odoo.define('frepple', function (require) {
             + '" width="100%" height="100%" marginwidth="0" marginheight="0" frameborder="no" '
             + ' scrolling="yes" style="border-width:0px;"/>');
           });
-    },
-    getTitle: function () {
-        return "Forecast Editor";
     }
   });
   core.action_registry.add('frepple.forecasteditor', ForecastEditor);
@@ -45,9 +42,6 @@ odoo.define('frepple', function (require) {
             + '" width="100%" height="100%" marginwidth="0" marginheight="0" frameborder="no" '
             + ' scrolling="yes" style="border-width:0px;"/>');
           });
-    },
-    getTitle: function () {
-        return "Inventory Planning";
     }
   });
   core.action_registry.add('frepple.inventoryplanning', InventoryPlanning);
@@ -69,9 +63,6 @@ odoo.define('frepple', function (require) {
             + '" width="100%" height="100%" marginwidth="0" marginheight="0" frameborder="no" '
             + ' scrolling="yes" style="border-width:0px;"/>');
           });
-    },
-    getTitle: function () {
-        return "Plan Editor";
     }
   });
   core.action_registry.add('frepple.planeditor', PlanEditor);
@@ -93,9 +84,6 @@ odoo.define('frepple', function (require) {
             + '" width="100%" height="100%" marginwidth="0" marginheight="0" frameborder="no" '
             + ' scrolling="yes" style="border-width:0px;"/>');
           });
-    },
-    getTitle: function () {
-        return "frePPLe";
     }
   });
   core.action_registry.add('frepple.homepage', HomePage);
