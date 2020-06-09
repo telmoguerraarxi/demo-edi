@@ -45,7 +45,7 @@ class exporter(object):
         # hand it won't break things either.
         #
         # Which data elements belong to each mode can vary between implementations.
-        self.mode = 1
+        self.mode = mode
 
         # Initialize an environment
         self.env = req.env
@@ -327,7 +327,6 @@ class exporter(object):
                 childlocs[i["view_location_id"][0]] = i["name"]
                 self.warehouses.add(i["name"])
             yield "</locations>\n"
-
             # Populate a mapping location-to-warehouse name for later lookups
             parent_loc = {}
             m = self.env["stock.location"]
@@ -335,24 +334,24 @@ class exporter(object):
             for i in recs.read(["location_id"]):
                 if i["location_id"]:
                     parent_loc[i["id"]] = i["location_id"][0]
-
             marked = {}
 
-            def fnd_parent(loc_id):  # go up the parent chain to find the warehouse
+            def fnd_parent(loc_id): # go up the parent chain to find the warehouse
                 if not marked.get(loc_id):  # ensures O(N) iterations instead of O(N^2)
                     if childlocs.get(loc_id):
                         return childlocs[loc_id]
                     if parent_loc.get(loc_id):
                         parent = fnd_parent(parent_loc[loc_id])
-                        if parent > 0:
+                        if parent != -1:
                             return parent
                 marked[loc_id] = True
                 return -1
 
+
             for loc_id in recs:
-                parent = fnd_parent(loc_id)
-                if parent > 0:
-                    self.map_locations[loc_id] = parent
+                parent = fnd_parent(loc_id.id)
+                if parent != -1:
+                    self.map_locations[loc_id.id] = parent
 
     def export_customers(self):
         """
@@ -364,7 +363,7 @@ class exporter(object):
         """
         self.map_customers = {}
         m = self.env["res.partner"]
-        recs = m.search([("is_company", "=", True), ("customer_rank", ">", 0)])
+        recs = m.search([("customer", "=", True)])
         if recs:
             yield "<!-- customers -->\n"
             yield "<customers>\n"
@@ -384,7 +383,7 @@ class exporter(object):
         res.partner.id res.partner.name -> supplier.name
         """
         m = self.env["res.partner"]
-        recs = m.search([("is_company", "=", True), ("supplier_rank", ">", 0)])
+        recs = m.search([("supplier", "=", True)])
         if recs:
             yield "<!-- suppliers -->\n"
             yield "<suppliers>\n"
@@ -452,13 +451,13 @@ class exporter(object):
         m = self.env["product.template"]
         fields = [
             "purchase_ok",
-            # "route_ids", #does not exist anymore in odoo 12
-            # "bom_ids",  #does not exist anymore in odoo 12
+            "route_ids",
+            "bom_ids",
             "produce_delay",
             "list_price",
             "uom_id",
-            # "seller_ids",  #does not exist anymore in odoo 12
-            # "standard_price",  #does not exist anymore in odoo 12
+            "seller_ids",
+            "standard_price",
         ]
         recs = m.search([])
         self.product_templates = {}
@@ -466,74 +465,112 @@ class exporter(object):
             self.product_templates[i["id"]] = i
 
         # Read the stock location routes
-        # rts = self.env["stock.location.route"]
-        # fields = ["name"]
-        # recs = rts.search([])
-
-        # Read the suppliers
-        m = self.env["res.partner"]
-        recs = m.search(
-            [
-                ("is_company", "=", True),
-                ("supplier_rank", ">", 0),
-                ("active", "=", True),
-            ]
-        )
-        supplier_id = {}
-        fields = ["id", "name"]
+        rts = self.env["stock.location.route"]
+        fields = ["name"]
+        recs = rts.search([])
+        stock_location_routes = {}
+        buy_route = None
+        mfg_route = None
         for i in recs.read(fields):
-            supplier_id[i["id"]] = i["name"]
+            stock_location_routes[i["id"]] = i
+            if i["name"] and i["name"].lower().startswith("buy"):
+                # Recognize items that can be purchased
+                buy_route = i["id"]
+            if i["name"] and i["name"].lower().startswith("manufacture"):
+                mfg_route = i["id"]
 
         # Read the products
         m = self.env["product.product"]
         recs = m.search([])
         s = self.env["product.supplierinfo"]
-        s_fields = ["name", "delay", "min_qty", "date_end", "date_start", "price"]
+        s_fields = [
+            "product_tmpl_id",
+            "name",
+            "delay",
+            "min_qty",
+            "date_end",
+            "date_start",
+            "price",
+        ]
+        s_recs = s.search([])
+        self.product_supplier = {}
+        for s in s_recs.read(s_fields):
+            if s["product_tmpl_id"][0] in self.product_supplier:
+                self.product_supplier[s["product_tmpl_id"][0]].append(
+                    (
+                        s["name"],
+                        s["delay"],
+                        s["min_qty"],
+                        s["date_end"],
+                        s["date_start"],
+                        s["price"],
+                    )
+                )
+            else:
+                self.product_supplier[s["product_tmpl_id"][0]] = [
+                    (
+                        s["name"],
+                        s["delay"],
+                        s["min_qty"],
+                        s["date_end"],
+                        s["date_start"],
+                        s["price"],
+                    )
+                ]
+        supplier = {}
         if recs:
             yield "<!-- products -->\n"
             yield "<items>\n"
-            fields = ["id", "name", "code", "product_tmpl_id"]  # , "seller_ids"]
+            fields = ["id", "name", "code", "product_tmpl_id", "seller_ids"]
             for i in recs.read(fields):
-                tmpl = self.product_templates[i["product_tmpl_id"][0]]
-                if i["code"]:
-                    name = u"[%s] %s" % (i["code"], i["name"])
-                else:
-                    name = i["name"]
-                prod_obj = {"name": name, "template": i["product_tmpl_id"][0]}
-                self.product_product[i["id"]] = prod_obj
-                self.product_template_product[i["product_tmpl_id"][0]] = prod_obj
-                yield '<item name=%s cost="%f" subcategory="%s,%s">\n' % (
-                    quoteattr(name),
-                    (tmpl["list_price"] or 0)
-                    / self.convert_qty_uom(1.0, tmpl["uom_id"][0], i["id"]),
-                    self.uom_categories[self.uom[tmpl["uom_id"][0]]["category"]],
-                    i["id"],
-                )
-                # Export suppliers for the item, if the item is allowed to be purchased
-                if (
-                    tmpl["purchase_ok"]
-                    # and buy_route in tmpl["route_ids"]
-                    # and tmpl["seller_ids"] seller_ids doesn't exist anymore in odoo 12
-                ):
-                    yield "<itemsuppliers>\n"
-                    for sup in s.search([("product_tmpl_id", "=", tmpl["id"])]).read(
-                        s_fields
+                yielded_header = False
+                try:
+                    tmpl = self.product_templates[i["product_tmpl_id"][0]]
+                    if i["code"]:
+                        name = u"[%s] %s" % (i["code"], i["name"])
+                    else:
+                        name = i["name"]
+                    prod_obj = {"name": name, "template": i["product_tmpl_id"][0]}
+                    self.product_product[i["id"]] = prod_obj
+                    self.product_template_product[i["product_tmpl_id"][0]] = prod_obj
+                    yield '<item name=%s cost="%f" subcategory="%s,%s">\n' % (
+                        quoteattr(name),
+                        (tmpl["list_price"] or 0)
+                        / self.convert_qty_uom(1.0, tmpl["uom_id"][0], i["id"]),
+                        self.uom_categories[self.uom[tmpl["uom_id"][0]]["category"]],
+                        i["id"],
+                    )
+                    yielded_header = True
+                    # Export suppliers for the item, if the item is allowed to be purchased
+                    if (
+                        tmpl["purchase_ok"]
+                        and i["product_tmpl_id"][0] in self.product_supplier
                     ):
-                        name = "%d %s" % (sup["name"][0], sup["name"][1])
-                        yield '<itemsupplier leadtime="P%dD" priority="1" size_minimum="%f" cost="%f"%s%s><supplier name=%s/></itemsupplier>\n' % (
-                            sup["delay"],
-                            sup["min_qty"],
-                            sup["price"],
-                            ' effective_end="%s"' % sup["date_end"]
-                            if sup["date_end"]
-                            else "",
-                            ' effective_start="%s"' % sup["date_start"]
-                            if sup["date_start"]
-                            else "",
-                            quoteattr(name),
-                        )
-                    yield "</itemsuppliers>\n"
-                yield "</item>\n"
+                        yield "<itemsuppliers>\n"
+                        for sup in self.product_supplier[i["product_tmpl_id"][0]]:
+                            try:
+                                name = "%d %s" % (sup[0][0], sup[0][1])
+                                yield '<itemsupplier leadtime="P%dD" priority="1" size_minimum="%f" cost="%f"%s%s><supplier name=%s/></itemsupplier>\n' % (
+                                    sup[1],
+                                    sup[2],
+                                    sup[5],
+                                    ' effective_end="%s"' % sup[3] if sup[3] else "",
+                                    ' effective_start="%s"' % sup[4] if sup[4] else "",
+                                    quoteattr(name),
+                                )
+                            except Exception as e:
+                                logger.error(
+                                    "Error exporting suppliers for product %s: %s"
+                                    % (i.get("id", None), e)
+                                )
+                        yield "</itemsuppliers>\n"
+                    yield "</item>\n"
+                except Exception as e:
+                    logger.error(
+                        "Error exporting product %s: %s" % (i.get("id", None), e)
+                    )
+                    if yielded_header:
+                        yield "</item>\n"
             yield "</items>\n"
 
     def export_boms(self):
@@ -548,12 +585,12 @@ class exporter(object):
         self.operations = set()
 
         # Read all active manufacturing routings
+        m = self.env["mrp.routing"]
+        recs = m.search([])
+        fields = ["location_id"]
         mrp_routings = {}
-        # m = self.env["mrp.routing"]
-        # recs = m.search([])
-        # fields = ["location_id"]
-        # for i in recs.read(fields):
-        #    mrp_routings[i["id"]] = i["location_id"]
+        for i in recs.read(fields):
+            mrp_routings[i["id"]] = i["location_id"]
 
         # Read all workcenters of all routings
         mrp_routing_workcenters = {}
@@ -608,6 +645,7 @@ class exporter(object):
             "routing_id",
             "type",
             "bom_line_ids",
+            "sub_products",
         ]
         for i in bom_recs.read(bom_fields):
             # Determine the location
@@ -755,6 +793,27 @@ class exporter(object):
                             * uom_factor,
                             quoteattr(product_buf["name"]),
                         )
+                        # Add byproduct flows
+                        if i.get("sub_products", None):
+                            for j in subproduct_model.browse(i["sub_products"]).read(
+                                subproduct_fields
+                            ):
+                                product = self.product_product.get(
+                                    j["product_id"][0], None
+                                )
+                                if not product:
+                                    continue
+                                yield '<flow xsi:type="%s" quantity="%f"><item name=%s/></flow>\n' % (
+                                    "flow_fixed_end"
+                                    if j["subproduct_type"] == "fixed"
+                                    else "flow_end",
+                                    self.convert_qty_uom(
+                                        j["product_qty"],
+                                        j["product_uom"][0],
+                                        j["product_id"][0],
+                                    ),
+                                    quoteattr(product["name"]),
+                                )
                         yield "</flows>\n"
                     if step[2] == steplist[0][2]:
                         # All consuming flows on the first routing step.
@@ -839,10 +898,11 @@ class exporter(object):
         fields = [
             "state",
             "partner_id",
-            "commitment_date",
+            "requested_date",
             "date_order",
             "picking_policy",
             "warehouse_id",
+            "picking_ids",
         ]
         so = {}
         for i in m.browse(ids).read(fields):
@@ -1034,10 +1094,11 @@ class exporter(object):
         mrp.production.date_planned -> operationplan.start
         '1' -> operationplan.locked
         """
+
         yield "<!-- manufacturing orders in progress -->\n"
         yield "<operationplans>\n"
         m = self.env["mrp.production"]
-        recs = m.search([("state", "in", ["in_production", "ready", "confirmed"])])
+        recs = m.search([("state", "in", ["progress", "confirmed", "planned"])])
         fields = [
             "bom_id",
             "date_start",
@@ -1050,7 +1111,7 @@ class exporter(object):
             "product_id",
         ]
         for i in recs.read(fields):
-            if i["state"] in ("in_production", "confirmed", "ready") and i["bom_id"]:
+            if i["bom_id"]:
                 # Open orders
                 location = self.map_locations.get(i["location_dest_id"][0], None)
                 operation = u"%d %s @ %s" % (i["bom_id"][0], i["bom_id"][1], location)
@@ -1062,11 +1123,14 @@ class exporter(object):
                 qty = self.convert_qty_uom(
                     i["product_qty"], i["product_uom_id"][0], i["product_id"][0]
                 )
-                yield '<operationplan reference=%s start="%s" end="%s" quantity="%s" locked="true"><operation name=%s/></operationplan>\n' % (
+                yield '<operationplan reference=%s start="%s" end="%s" quantity="%s" status="%s"><operation name=%s/></operationplan>\n' % (
                     quoteattr(i["name"]),
-                    startdate,
-                    startdate,
+                    startdate.strftime("%Y-%m-%dT%H:%M:%S"),
+                    startdate.strftime("%Y-%m-%dT%H:%M:%S"),
                     qty,
+                    "confirmed"
+                    if i["state"] in ("progress", "planned")
+                    else "approved",
                     quoteattr(operation),
                 )
         yield "</operationplans>\n"
@@ -1164,3 +1228,4 @@ class exporter(object):
                 quoteattr(key[1]),
             )
         yield "</buffers>\n"
+
