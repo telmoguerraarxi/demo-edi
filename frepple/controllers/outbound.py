@@ -1012,7 +1012,7 @@ class exporter(object):
         yield "<!-- manufacturing orders in progress -->\n"
         yield "<operationplans>\n"
         m = self.env["mrp.production"]
-        recs = m.search([("state", "in", ["in_production", "ready", "confirmed"])])
+        recs = m.search([("state", "in", ["progress", "ready", "confirmed", "planned"])])
         fields = [
             "bom_id",
             "date_start",
@@ -1025,7 +1025,7 @@ class exporter(object):
             "product_id",
         ]
         for i in recs.read(fields):
-            if i["state"] in ("in_production", "confirmed", "ready") and i["bom_id"]:
+            if i["state"] in ("progress", "confirmed", "ready", "planned") and i["bom_id"]:
                 # Open orders
                 location = self.map_locations.get(i["location_dest_id"][0], None)
                 operation = u"%d %s @ %s" % (i["bom_id"][0], i["bom_id"][1], location)
