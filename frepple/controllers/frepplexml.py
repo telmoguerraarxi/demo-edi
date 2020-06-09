@@ -22,10 +22,12 @@ import odoo
 from werkzeug.exceptions import MethodNotAllowed, InternalServerError
 from werkzeug.wrappers import Response
 
-from odoo.addons.web.controllers.main import db_monodb, ensure_db
+from odoo.addons.web.controllers.main import db_monodb
 
 from odoo.addons.frepple.controllers.outbound import exporter
 from odoo.addons.frepple.controllers.inbound import importer
+
+logger = logging.getLogger(__name__)
 
 try:
     import jwt
@@ -33,9 +35,6 @@ except Exception:
     logger.error(
         "PyJWT module has not been installed. Please install the library from https://pypi.python.org/pypi/PyJWT"
     )
-
-
-logger = logging.getLogger(__name__)
 
 
 class XMLController(odoo.http.Controller):
@@ -70,8 +69,8 @@ class XMLController(odoo.http.Controller):
         if req.httprequest.method == "GET":
             # Login
             database = kwargs.get("database", None)
-            # if not database:
-            #     database = db_monodb()
+            if not database:
+                database = db_monodb()
             req.session.db = database
             try:
                 uid = self.authenticate(req, database, language)
@@ -115,8 +114,8 @@ class XMLController(odoo.http.Controller):
         elif req.httprequest.method == "POST":
             # Authenticate the user
             database = req.httprequest.form.get("database", None)
-            # if not database:
-            #     database = db_monodb()
+            if not database:
+                database = db_monodb()
             req.session.db = database
             try:
                 self.authenticate(req, database, language)
